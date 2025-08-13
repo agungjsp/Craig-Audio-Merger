@@ -205,3 +205,35 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# ------------------------------
+# Project-specific ignores
+# ------------------------------
+
+# macOS Finder metadata
+.DS_Store
+
+# Generated merged audio outputs
+merged_*.mp3
+merged_*.wav
+merged_*.ogg
+merged_*.aac
+merged_*.m4a
+
+# Craig recording folders (input data) - avoid committing raw recordings
+craig-*/
+
+# FFmpeg two-pass logs and common temp artifacts
+ffmpeg2pass-*.log
+ffmpeg2pass-*.log.mbtree
+
+# Generic logs and temp files
+*.log
+*.tmp
+/tmp/
+/tmp/**
+.temp/
+.temp/**
+tmp/
+temp/
+*.cache
