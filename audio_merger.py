@@ -156,6 +156,7 @@ class CraigAudioMerger:
         output_file: Path,
         output_format: str,
         quality_level: str,
+        remove_silence: bool = False,
     ) -> List[str]:
         """Build optimized FFmpeg command for merging audio files"""
         if not input_files:
@@ -169,14 +170,31 @@ class CraigAudioMerger:
 
         # Build filter_complex
         num_inputs = len(input_files)
+        
+        # Silence removal filter: removes silence longer than 0.5s below -50dB
+        silence_filter = (
+            "silenceremove=start_periods=1:start_duration=0.1:start_threshold=-50dB:"
+            "detection=peak,silenceremove=stop_periods=-1:stop_duration=0.5:"
+            "stop_threshold=-50dB:detection=peak"
+        )
+        
         if num_inputs == 1:
-            filter_complex = "[0:a]loudnorm=I=-16:TP=-1.5:LRA=11[out]"
+            if remove_silence:
+                filter_complex = f"[0:a]{silence_filter},loudnorm=I=-16:TP=-1.5:LRA=11[out]"
+            else:
+                filter_complex = "[0:a]loudnorm=I=-16:TP=-1.5:LRA=11[out]"
         else:
             inputs_str = "".join(f"[{i}:a]" for i in range(num_inputs))
-            filter_complex = (
-                f"{inputs_str}amix=inputs={num_inputs}:duration=longest:"
-                "dropout_transition=2,loudnorm=I=-16:TP=-1.5:LRA=11[out]"
-            )
+            if remove_silence:
+                filter_complex = (
+                    f"{inputs_str}amix=inputs={num_inputs}:duration=longest:"
+                    f"dropout_transition=2,{silence_filter},loudnorm=I=-16:TP=-1.5:LRA=11[out]"
+                )
+            else:
+                filter_complex = (
+                    f"{inputs_str}amix=inputs={num_inputs}:duration=longest:"
+                    "dropout_transition=2,loudnorm=I=-16:TP=-1.5:LRA=11[out]"
+                )
 
         cmd.extend(["-filter_complex", filter_complex])
         cmd.extend(["-map", "[out]"])
@@ -332,6 +350,7 @@ class CraigAudioMerger:
         output_format: str = "mp3",
         quality_level: str = "medium",
         delete_originals: bool = False,
+        remove_silence: bool = False,
     ) -> Tuple[bool, Optional[Path]]:
         """Merge audio files from a Craig folder into a single output file"""
         try:
@@ -358,7 +377,7 @@ class CraigAudioMerger:
 
             # Build and execute FFmpeg command
             cmd = self.build_ffmpeg_command(
-                audio_files, output_file, output_format, quality_level
+                audio_files, output_file, output_format, quality_level, remove_silence
             )
             success, error = self.execute_ffmpeg(cmd, estimated_duration)
 
@@ -393,6 +412,7 @@ class CraigAudioMerger:
         delete_originals: bool = False,
         dry_run: bool = False,
         selected_folders: Optional[List[Path]] = None,
+        remove_silence: bool = False,
     ) -> Dict[str, Any]:
         """Process all Craig folders in the base directory"""
         self._log("🎙️  Craig Audio Merger - Starting...")
@@ -450,7 +470,9 @@ class CraigAudioMerger:
             self._log("=" * 60)
             self._log(f"📁 Processing Craig folder: {folder.name}")
 
-            success, output_file = self.merge_audio_files(folder, output_format, quality_level, delete_originals)
+            success, output_file = self.merge_audio_files(
+                folder, output_format, quality_level, delete_originals, remove_silence
+            )
             if success:
                 successful += 1
                 if output_file:
@@ -551,6 +573,12 @@ Examples:
         action="store_true",
         help="Enable verbose logging"
     )
+    
+    parser.add_argument(
+        "--remove-silence",
+        action="store_true",
+        help="Remove silence from the merged audio"
+    )
 
     args = parser.parse_args()
 
@@ -565,7 +593,8 @@ Examples:
         output_format=args.format,
         quality_level=args.quality,
         delete_originals=args.delete_originals,
-        dry_run=args.dry_run
+        dry_run=args.dry_run,
+        remove_silence=args.remove_silence
     )
 
     # Exit with non-zero code on failure for CI/scripting use

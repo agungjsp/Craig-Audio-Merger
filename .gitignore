@@ -212,6 +212,18 @@ __marimo__/
 
 # macOS Finder metadata
 .DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+.directory
 
 # Generated merged audio outputs
 merged_*.mp3
@@ -237,3 +249,59 @@ ffmpeg2pass-*.log.mbtree
 tmp/
 temp/
 *.cache
+
+# ------------------------------
+# Editor & IDE ignores
+# ------------------------------
+
+# VSCode
+.vscode/
+*.code-workspace
+
+# JetBrains (PyCharm, etc.)
+.idea/
+*.iml
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim/Neovim
+*.swp
+*.swo
+*.swn
+Session.vim
+.netrwhist
+
+# Emacs
+*~
+\#*\#
+.#*
+
+# ------------------------------
+# AI Tools ignores
+# ------------------------------
+
+# Cursor AI
+.cursor/
+
+# Claude/Anthropic
+.claude/
+
+# OpenCode/Qoder
+.qoder/
+
+# Aider
+.aider*
+
+# Continue
+.continue/
+
+# Codeium
+.codeium/
+
+# Tabnine
+.tabnine/
+
+# GitHub Copilot
+.copilot/
