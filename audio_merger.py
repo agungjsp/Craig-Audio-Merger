@@ -7,7 +7,6 @@ Detects Craig folders and merges .aac files into a single optimized audio file
 import argparse
 import json
 import logging
-import os
 import re
 import subprocess
 import sys
@@ -21,9 +20,22 @@ class CraigAudioMerger:
                  progress_callback: Optional[Callable[[float], None]] = None,
                  log_callback: Optional[Callable[[str, str], None]] = None,
                  status_callback: Optional[Callable[[str], None]] = None):
-        self.base_directory = Path(base_directory)
-        self.output_dir = Path(output_dir) if output_dir else self.base_directory
-        self.supported_formats = [".aac", ".mp3", ".wav", ".m4a", ".ogg"]
+        self.base_directory = Path(base_directory).resolve()
+        self.output_dir = Path(output_dir).resolve() if output_dir else self.base_directory
+        
+        # Validate directories
+        if not self.base_directory.exists():
+            raise ValueError(f"Base directory does not exist: {self.base_directory}")
+        if not self.base_directory.is_dir():
+            raise ValueError(f"Base directory is not a directory: {self.base_directory}")
+        
+        # Create output directory if it doesn't exist
+        if not self.output_dir.exists():
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+        elif not self.output_dir.is_dir():
+            raise ValueError(f"Output directory is not a directory: {self.output_dir}")
+        
+        self.supported_formats = [".aac", ".mp3", ".wav", ".m4a", ".ogg", ".flac"]
         self.craig_pattern = re.compile(r"craig-[a-zA-Z0-9_-]+")
         self.logger = logging.getLogger(__name__)
         
@@ -73,15 +85,17 @@ class CraigAudioMerger:
                 text=True,
                 check=True,
             )
-            version_match = re.search(r"ffmpeg version (\d+\.\d+)", result.stdout)
+            # Parse version more robustly (handles 7.1, 7.1.2, etc.)
+            version_match = re.search(r"ffmpeg version (\d+)(?:\.(\d+))?", result.stdout)
             if version_match:
-                version = float(version_match.group(1))
-                if version < 4.0:
+                major = int(version_match.group(1))
+                minor = int(version_match.group(2)) if version_match.group(2) else 0
+                if major < 4:
                     self._log(
                         "FFmpeg version is too old (needs 4.0+ for loudnorm)", "error"
                     )
                     return False
-                self._log(f"FFmpeg version {version} detected")
+                self._log(f"FFmpeg version {major}.{minor} detected")
             else:
                 # Could not parse version but ffmpeg exists; continue
                 self._log("FFmpeg detected")
@@ -130,7 +144,7 @@ class CraigAudioMerger:
         )
         return audio_files
 
-    def get_audio_info(self, file_path: Path) -> dict:
+    def get_audio_info(self, file_path: Path, timeout: int = 30) -> dict:
         """Get audio file information using ffprobe"""
         try:
             cmd = [
@@ -143,8 +157,11 @@ class CraigAudioMerger:
                 "-show_streams",
                 str(file_path),
             ]
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=timeout)
             return json.loads(result.stdout)
+        except subprocess.TimeoutExpired:
+            self.logger.debug(f"Timeout getting audio info for {file_path}")
+            return {}
         except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
             self.logger.debug(f"Error getting audio info for {file_path}: {e}")
             return {}
@@ -156,6 +173,8 @@ class CraigAudioMerger:
         output_file: Path,
         output_format: str,
         quality_level: str,
+        sample_rate: int = 44100,
+        mono: bool = False,
     ) -> List[str]:
         """Build optimized FFmpeg command for merging audio files"""
         if not input_files:
@@ -188,6 +207,7 @@ class CraigAudioMerger:
             "ogg": "libvorbis",
             "aac": "aac",
             "m4a": "aac",  # AAC in MP4 container
+            "flac": "flac",
         }
         if output_format not in codec_map:
             raise ValueError(f"Unsupported output format: {output_format}")
@@ -207,12 +227,17 @@ class CraigAudioMerger:
             # Use target bitrates for native AAC encoder
             aac_bitrate_map = {"low": "128k", "medium": "192k", "high": "256k"}
             cmd.extend(["-b:a", aac_bitrate_map.get(quality_level, "192k")])
+        elif output_format == "flac":
+            # FLAC compression level: 0 (fastest) to 8 (best compression)
+            flac_compression_map = {"low": "0", "medium": "5", "high": "8"}
+            cmd.extend(["-compression_level", flac_compression_map.get(quality_level, "5")])
         # WAV is lossless PCM, no quality setting
 
         # Common output audio parameters
+        channels = "1" if mono else "2"
         cmd.extend([
-            "-ar", "44100",
-            "-ac", "2",
+            "-ar", str(sample_rate),
+            "-ac", channels,
             "-avoid_negative_ts", "make_zero",
         ])
 
@@ -233,7 +258,8 @@ class CraigAudioMerger:
         return cmd
 
     def execute_ffmpeg(
-        self, cmd: List[str], estimated_duration: Optional[float] = None
+        self, cmd: List[str], estimated_duration: Optional[float] = None,
+        base_progress: float = 0.0, progress_weight: float = 1.0
     ) -> Tuple[bool, str]:
         """Execute FFmpeg command with progress monitoring"""
         self._log(f"Executing FFmpeg command (truncated): {' '.join(cmd[:5])}...")
@@ -245,7 +271,6 @@ class CraigAudioMerger:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                universal_newlines=True,
             )
 
             # Monitor progress
@@ -269,15 +294,18 @@ class CraigAudioMerger:
                         minutes = int(time_match.group(2))
                         seconds = float(time_match.group(3))
                         current_time = hours * 3600 + minutes * 60 + seconds
-                        progress = min(current_time / estimated_duration, 0.95)
-                        self._update_progress(progress)
+                        file_progress = min(current_time / estimated_duration, 0.95)
+                        # Combine folder progress with file progress
+                        total_progress = base_progress + (file_progress * progress_weight)
+                        self._update_progress(total_progress)
                         self._log(f"Progress: {time_match.group(0)[5:]}")
 
             rc = process.poll()
             stderr_output = ''.join(stderr_lines)
             
             if rc == 0:
-                self._update_progress(1.0)
+                # Set progress to end of this folder's weight
+                self._update_progress(base_progress + progress_weight)
                 self._log("✅ Audio merging completed successfully!")
                 self._update_status("Completed successfully")
                 return True, ""
@@ -332,6 +360,10 @@ class CraigAudioMerger:
         output_format: str = "mp3",
         quality_level: str = "medium",
         delete_originals: bool = False,
+        sample_rate: int = 44100,
+        mono: bool = False,
+        base_progress: float = 0.0,
+        progress_weight: float = 1.0,
     ) -> Tuple[bool, Optional[Path]]:
         """Merge audio files from a Craig folder into a single output file"""
         try:
@@ -358,9 +390,11 @@ class CraigAudioMerger:
 
             # Build and execute FFmpeg command
             cmd = self.build_ffmpeg_command(
-                audio_files, output_file, output_format, quality_level
+                audio_files, output_file, output_format, quality_level, sample_rate, mono
             )
-            success, error = self.execute_ffmpeg(cmd, estimated_duration)
+            success, error = self.execute_ffmpeg(
+                cmd, estimated_duration, base_progress, progress_weight
+            )
 
             if success and output_file.exists():
                 # Display file info
@@ -393,6 +427,8 @@ class CraigAudioMerger:
         delete_originals: bool = False,
         dry_run: bool = False,
         selected_folders: Optional[List[Path]] = None,
+        sample_rate: int = 44100,
+        mono: bool = False,
     ) -> Dict[str, Any]:
         """Process all Craig folders in the base directory"""
         self._log("🎙️  Craig Audio Merger - Starting...")
@@ -409,9 +445,10 @@ class CraigAudioMerger:
             self._log("💡 Craig folders should match pattern: craig-[identifier]")
             return {"success": False, "error": "No Craig folders found"}
 
-        # Use selected folders if provided
+        # Use selected folders if provided (compare by resolved path)
         if selected_folders is not None:
-            craig_folders = [f for f in craig_folders if f in selected_folders]
+            selected_resolved = {f.resolve() for f in selected_folders}
+            craig_folders = [f for f in craig_folders if f.resolve() in selected_resolved]
 
         self._log(f"✅ Found {len(craig_folders)} Craig folder(s):")
         for folder in craig_folders:
@@ -443,14 +480,19 @@ class CraigAudioMerger:
             if self.cancel_requested:
                 self._log("Processing cancelled by user", "warning")
                 break
-                
-            folder_progress = i / total_folders
-            self._update_progress(folder_progress)
+            
+            # Calculate base progress for this folder
+            folder_base_progress = i / total_folders
+            folder_weight = 1.0 / total_folders
+            self._update_progress(folder_base_progress)
             
             self._log("=" * 60)
-            self._log(f"📁 Processing Craig folder: {folder.name}")
+            self._log(f"📁 Processing Craig folder ({i+1}/{total_folders}): {folder.name}")
 
-            success, output_file = self.merge_audio_files(folder, output_format, quality_level, delete_originals)
+            success, output_file = self.merge_audio_files(
+                folder, output_format, quality_level, delete_originals, 
+                sample_rate, mono, folder_base_progress, folder_weight
+            )
             if success:
                 successful += 1
                 if output_file:
@@ -522,7 +564,7 @@ Examples:
     
     parser.add_argument(
         "--format",
-        choices=["mp3", "wav", "ogg", "aac", "m4a"],
+        choices=["mp3", "wav", "ogg", "aac", "m4a", "flac"],
         default="mp3",
         help="Output format (default: mp3)"
     )
@@ -551,6 +593,20 @@ Examples:
         action="store_true",
         help="Enable verbose logging"
     )
+    
+    parser.add_argument(
+        "--sample-rate",
+        type=int,
+        default=44100,
+        choices=[22050, 44100, 48000, 96000],
+        help="Output sample rate in Hz (default: 44100)"
+    )
+    
+    parser.add_argument(
+        "--mono",
+        action="store_true",
+        help="Output mono audio instead of stereo"
+    )
 
     args = parser.parse_args()
 
@@ -565,7 +621,9 @@ Examples:
         output_format=args.format,
         quality_level=args.quality,
         delete_originals=args.delete_originals,
-        dry_run=args.dry_run
+        dry_run=args.dry_run,
+        sample_rate=args.sample_rate,
+        mono=args.mono
     )
 
     # Exit with non-zero code on failure for CI/scripting use
