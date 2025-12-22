@@ -1,68 +1,124 @@
 # Craig Audio Merger
 
-A simple command‑line tool that detects Craig Discord recording folders and merges multiple audio files into a single, normalized output using FFmpeg.
+A simple command-line tool that detects Craig Discord recording folders and merges multiple audio files into a single, normalized output using FFmpeg.
 
 ## Features
 
 - **Automatic Craig folder detection**: finds folders matching `craig-[identifier]`
-- **Multi‑format input**: supports .aac, .mp3, .wav, .m4a inputs
+- **Multi-format input**: supports .aac, .mp3, .wav, .m4a, .ogg, .flac inputs
 - **Optimized mixing**: mixes all tracks with `amix` and applies `loudnorm` to -16 LUFS
-- **Flexible output**: choose `mp3`, `wav`, `ogg`, or `aac` with quality presets
+- **Silence removal**: optionally remove silent sections from the merged audio
+- **Flexible output**: choose `mp3`, `wav`, `ogg`, `aac`, `m4a`, or `flac` with quality presets
 - **Progress + logging**: clear console logs with progress updates
 
 ## Requirements
 
 - Python 3.8+
+- [uv](https://docs.astral.sh/uv/) (recommended) or pip
 - FFmpeg installed and available on PATH
 
 ## Installation
 
-Clone the repository (no Python package dependencies required):
+Clone the repository:
 
 ```bash
 git clone https://github.com/your-username/craig-audio-merger.git
 cd craig-audio-merger
 ```
 
+Install uv (if not already installed):
+
+```bash
+# macOS/Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Windows
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Install FFmpeg:
+
+```bash
+# macOS
+brew install ffmpeg
+
+# Ubuntu/Debian
+sudo apt install ffmpeg
+
+# Windows (using winget)
+winget install ffmpeg
+```
+
 ## Usage
 
-Basic:
+### Basic Usage
 
 ```bash
-python audio_merger.py
-```
+# Process current directory
+uv run audio_merger.py
 
-Options:
-
-- `-d, --directory` Base directory to scan (default: current directory)
-- `--output-dir` Directory to write merged files (default: same as input)
-- `--format` Output format: `mp3`, `wav`, `ogg`, `aac` (default: `mp3`)
-- `--quality` Quality preset: `low`, `medium`, `high` (default: `medium`)
-- `--delete-originals` Delete Craig folder(s) after a successful merge
-- `--dry-run` Show what would be processed without merging
-- `-v, --verbose` More detailed logs
-
-Examples:
-
-```bash
 # Process a specific directory
-python audio_merger.py -d /path/to/craig
-
-# Preview without writing files
-python audio_merger.py --dry-run
-
-# High‑quality WAV output
-python audio_merger.py --format wav --quality high
-
-# Delete Craig folder(s) after merge
-python audio_merger.py --delete-originals
+uv run audio_merger.py -d /path/to/craig
 ```
+
+### Command-Line Options
+
+| Option | Description |
+|--------|-------------|
+| `-d, --directory` | Base directory to scan (default: current directory) |
+| `--output-dir` | Directory to write merged files (default: same as input) |
+| `--format` | Output format: `mp3`, `wav`, `ogg`, `aac`, `m4a`, `flac` (default: `mp3`) |
+| `--quality` | Quality preset: `low`, `medium`, `high` (default: `medium`) |
+| `--sample-rate` | Output sample rate: `22050`, `44100`, `48000`, `96000` Hz (default: `44100`) |
+| `--mono` | Output mono audio instead of stereo |
+| `--remove-silence` | Remove silent sections from the merged audio |
+| `--delete-originals` | Delete Craig folder(s) after a successful merge |
+| `--dry-run` | Show what would be processed without merging |
+| `-v, --verbose` | Enable verbose logging |
+
+### Examples
+
+```bash
+# Preview what would be processed (dry run)
+uv run audio_merger.py --dry-run
+
+# High-quality WAV output
+uv run audio_merger.py --format wav --quality high
+
+# Remove silence from merged audio
+uv run audio_merger.py --remove-silence
+
+# MP3 output with silence removal and high quality
+uv run audio_merger.py --format mp3 --quality high --remove-silence
+
+# Output mono audio at 48kHz
+uv run audio_merger.py --mono --sample-rate 48000
+
+# Process and delete original Craig folders after merge
+uv run audio_merger.py --delete-originals
+
+# Full example with all options
+uv run audio_merger.py -d /path/to/recordings --output-dir /path/to/output \
+    --format mp3 --quality high --remove-silence --sample-rate 48000 -v
+```
+
+### Output Formats & Quality
+
+| Format | Codec | Quality Settings |
+|--------|-------|------------------|
+| `mp3` | libmp3lame | VBR: low=4, medium=2, high=0 |
+| `ogg` | libvorbis | Quality: low=4, medium=5, high=6 |
+| `aac` | aac | Bitrate: low=128k, medium=192k, high=256k |
+| `m4a` | aac | Bitrate: low=128k, medium=192k, high=256k |
+| `flac` | flac | Compression: low=0, medium=5, high=8 |
+| `wav` | pcm_s16le | Lossless (quality setting ignored) |
 
 ## Notes
 
-- Output files are named like `merged_[clean_folder_name]_[YYYYMMDD_HHMMSS].[ext]`
-- For `wav` output, the tool uses PCM 16‑bit (`pcm_s16le`) and ignores quality presets (since lossless)
-- Ensure FFmpeg is installed. On macOS: `brew install ffmpeg`; Debian/Ubuntu: `sudo apt install ffmpeg`
+- Output files are named: `merged_[folder_name]_[YYYYMMDD_HHMMSS].[ext]`
+- Craig folders must match the pattern: `craig-[identifier]`
+- The `--remove-silence` option removes gaps longer than 0.5s below -50dB
+- Audio is normalized to -16 LUFS with -1.5dB true peak
 
 ## License
 
